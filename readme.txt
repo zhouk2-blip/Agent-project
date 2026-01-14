@@ -14,10 +14,7 @@ agent email:
 google api with oauth2
 scope:https://www.googleapis.com/auth/gmail.readonly;https://www.googleapis.com/auth/gmail.modify;https://www.googleapis.com/auth/gmail.send
 
-
-因为学校是 Google Workspace，
-通常不允许用 IMAP+密码这类基础认证。应该用 Gmail API，并通过 OAuth 2.0 获取用户授权（token），用 token 访问邮件。
-这里的用token访问邮件是指用 OAuth 2.0 颁发的access_token, 代表用户身份，向Gmail API 发送HTTP请求
+In v1, you have to pull the model from Ollama according to your demand.
 
 在没有parser的情况下，发送email指令：
 草拟邮件 to=xxx@school.edu subject="trial" 内容="have you finished dinner?"
