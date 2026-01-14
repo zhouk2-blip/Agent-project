@@ -14,9 +14,4 @@ email:
       token_path: "secrets/gmail_token.json"
 
 profile: 
-  display_name : "Jason"
-  email_siganture: "Best regards, \n Jason"
-  default_email_language: "en"
-  important_senders: ["@gradescope.com","arafferty@carleton.edu"]
-  important_keywords: ["cs department", "research", "application", "scholarship", "grade"]
-
+  #according to your preference
