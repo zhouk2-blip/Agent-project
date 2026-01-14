@@ -20,7 +20,7 @@ scope:https://www.googleapis.com/auth/gmail.readonly;https://www.googleapis.com/
 这里的用token访问邮件是指用 OAuth 2.0 颁发的access_token, 代表用户身份，向Gmail API 发送HTTP请求
 
 在没有parser的情况下，发送email指令：
-草拟邮件 to=pengj2@carleton.edu subject="trial" 内容="have you finished dinner?"
+草拟邮件 to=xxx@school.edu subject="trial" 内容="have you finished dinner?"
 
 目录结构：
 AGENT-PROJECT/
