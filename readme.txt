@@ -1,0 +1,67 @@
+User
+ ↓
+Orchestrator
+  ├─ State Gate (confirm_send)
+  ├─ Parser (action detection)
+  ├─ Router (email vs QA)
+ ↓
+Agent (EmailAgent / QAAgent)
+ ↓
+Tools (LLM, Gmail API, Editor)
+
+
+agent email:
+google api with oauth2
+scope:https://www.googleapis.com/auth/gmail.readonly;https://www.googleapis.com/auth/gmail.modify;https://www.googleapis.com/auth/gmail.send
+
+
+因为学校是 Google Workspace，
+通常不允许用 IMAP+密码这类基础认证。应该用 Gmail API，并通过 OAuth 2.0 获取用户授权（token），用 token 访问邮件。
+这里的用token访问邮件是指用 OAuth 2.0 颁发的access_token, 代表用户身份，向Gmail API 发送HTTP请求
+
+在没有parser的情况下，发送email指令：
+草拟邮件 to=pengj2@carleton.edu subject="trial" 内容="have you finished dinner?"
+
+目录结构：
+AGENT-PROJECT/
+├─ agents/
+│  ├─ __init__.py
+│  ├─ base.py
+│  ├─ email_agent.py
+│  └─ qa_agent.py
+├─ apps/
+├─ configs/
+│  └─ config.yaml
+├─ docs/
+├─ memory/
+├─ scripts/
+│  ├─ __init__.py
+│  ├─ new_test.py
+│  ├─ run_orchestrator.py
+│  └─ test.py
+├─ secrets/
+│  ├─ gmail_credentials.json
+│  └─ gmail_token.json
+├─ server/
+│  ├─ __init__.py
+│  ├─ orchestrator.py
+│  ├─ llm/
+│  │  ├─ __init__.py
+│  │  ├─ base.py
+│  │  ├─ factory.py
+│  │  └─ ollama_provider.py
+│  ├─ tools/
+│  |  ├─ __init__.py
+│  |  └─ email/
+│  |     ├─ __init__.py
+│  |     ├─ base.py
+│  |     ├─ factory.py
+│  |     └─ gmil_provider.py
+|  |
+|  ├─ parser/
+|  |  ├─ __init__.py
+│  │  ├─ schema.py
+│  │  ├─ router.py
+│  │  
+
+
