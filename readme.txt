@@ -10,16 +10,25 @@ Agent (EmailAgent / QAAgent)
 Tools (LLM, Gmail API, Editor)
 
 
-agent email:
-google api with oauth2
-scope:https://www.googleapis.com/auth/gmail.readonly;https://www.googleapis.com/auth/gmail.modify;https://www.googleapis.com/auth/gmail.send
+email_agent setup:
+log in our google cloud console
+go to APIs & Services and enable gmail api
+go to OAuth consent screen
+go to audience, set user type to external, add test user : your email: example@school.edu
+go to data access: add scopes:
+https://www.googleapis.com/auth/gmail.readonly;
+https://www.googleapis.com/auth/gmail.modify;
+https://www.googleapis.com/auth/gmail.send;
+https://www.googleapis.com/auth/gmail.compose;
+
+then, you are ready to create the client, and download the json file.  Rename it to gmail_credentials.json and put it in the secrets folder. The gmail_token.json will be generated after you run the system.
 
 In v1, you have to pull the model from Ollama according to your demand.
 
 在没有parser的情况下，发送email指令：
 草拟邮件 to=xxx@school.edu subject="trial" 内容="have you finished dinner?"
 
-目录结构：
+structure：
 AGENT-PROJECT/
 ├─ agents/
 │  ├─ __init__.py
