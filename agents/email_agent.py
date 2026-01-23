@@ -3,6 +3,11 @@ from typing import List, Dict, Tuple
 from server.llm.base import LLMProvider, Message
 from .base import AgentResult
 from tools.email.base import EmailProvider, EmailHeader
+import json
+import re
+def _extract_email_local(text: str) -> str:
+        m = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", text, flags=re.IGNORECASE)
+        return m.group(0) if m else ""
 
 class EmailAgent:
     name = "email"
@@ -29,7 +34,7 @@ class EmailAgent:
         messages: List[Message] = [
             {"role": "system", "content": (
                 "你是一个邮件助理。请用中文完成：\n"
-                "1) 总结最近邮件要点, 最好有一些具体信息，来自谁，目的是；\n"
+                "1) 总结最近邮件要点, 邮件内的重要的信息（时间，任务，紧急程度）；\n"
                 "2) 标出最重要的 1-3 封（说明理由）；\n"
                 "3) 给出可执行下一步（要不要回、回什么）。\n"
                 "输出用条目列表，简洁清晰。"
@@ -38,11 +43,14 @@ class EmailAgent:
         ]
         resp = self.llm.chat(messages)
         return AgentResult(content=resp.content, messages=messages)
+    
+    
+
     def draft_email(self, to: str, subject: str, intent: str, context: str = "") -> Tuple[AgentResult, str]:
         name = self.profile.get("display_name", "Jason")
         sig = self.profile.get("email_signature", f"Best regards,\n{name}")
         default_lang = (self.profile.get("default_email_language") or "en").lower()
-
+       
         messages: List[Message] = [
             {"role": "system", "content": (
                 "You are a professional email writing assistant.\n"
@@ -77,7 +85,7 @@ class EmailAgent:
         先做一个简单规则版，后续接 memory：
         - memory 里可存：重要联系人/关键词/课程名/教授邮箱等
         """
-        important_senders = set(self.profile.get("important_senders", []))  # 先用 profile 顶着
+        important_senders = set(self.profile.get("important_senders", []))  
         important_keywords = set(self.profile.get("important_keywords", []))
 
         def score(e: EmailHeader) -> int:
@@ -87,7 +95,7 @@ class EmailAgent:
             subj = (e.subject or "").lower()
             if any(k.lower() in subj for k in important_keywords):
                 s += 3
-            # 你还可以加：包含 “deadline/urgent/assignment/grade”等
+           
             for kw in ["urgent", "asap", "deadline", "due", "quiz", "midterm", "final"]:
                 if kw in subj:
                     s += 2
@@ -100,27 +108,27 @@ class EmailAgent:
         name = self.profile.get("display_name", "Jason")
         sig = self.profile.get("email_signature", f"Best regards,\n{name}")
         prompt = f"""
-    You are editing an email draft.
+            You are editing an email draft.
 
-    Return ONLY the revised email body. No commentary.
+            Return ONLY the revised email body. No commentary.
 
-    Constraints:
-    - Keep it as a complete email (greeting, body, closing).
-    - Preserve meaning unless the instruction asks to change meaning.
-    - Keep names, dates, and facts consistent.
-    
-    User signature (use exactly, including line breaks):
-    {sig}
-    Context:
-    To: {to or ""}
-    Subject: {subject or ""}
+            Constraints:
+            - Keep it as a complete email (greeting, body, closing).
+            - Preserve meaning unless the instruction asks to change meaning.
+            - Keep names, dates, and facts consistent.
+            
+            User signature (use exactly, including line breaks):
+            {sig}
+            Context:
+            To: {to or ""}
+            Subject: {subject or ""}
 
-    Current draft:
-    {current_body}
+            Current draft:
+            {current_body}
 
-    Instruction:
-    {instruction}
-    """.strip()
+            Instruction:
+            {instruction}
+            """.strip()
 
         resp = self.llm.chat([{"role": "user", "content": prompt}])
         return resp.content.strip()
@@ -154,3 +162,60 @@ class EmailAgent:
 
         resp = self.llm.chat([{"role": "user", "content": prompt}])
         return resp.content.strip()
+    def draft_email_auto(self, user_text: str, context: str = "") -> Tuple[AgentResult, str, str, str]:
+  
+        name = self.profile.get("display_name", "Jason")
+        sig = self.profile.get("email_signature", f"Best regards,\n{name}")
+        default_lang = (self.profile.get("default_email_language") or "en").lower()
+        to_guess = _extract_email_local(user_text)
+        messages: List[Message] = [
+            {"role": "system", "content": (
+                "You are a professional email assistant.\n"
+                "Return STRICT JSON only (no markdown, no commentary).\n"
+                "Schema:\n"
+                "{\n"
+                '  "to": string,\n'
+                '  "subject": string,\n'
+                '  "body": string\n'
+                "}\n"
+                "Rules:\n"
+                "- Do NOT invent facts.\n"
+                "- If recipient email is missing, set to \"\" and include [NEEDS USER INPUT: recipient email] in body.\n"
+                f"- Default language: {default_lang}\n"
+                "- The email must end with the signature EXACTLY as provided below:\n"
+                f"{sig}\n"
+            )},
+            {"role": "user", "content": (
+                f"User request:\n{user_text}\n\n"
+                f"Context (optional): {context}\n"
+                "Generate JSON now."
+            )},
+        ]
+
+        resp = self.llm.chat(messages)
+        raw = (resp.content or "").strip()
+
+        m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        json_text = m.group(0) if m else raw
+
+        try:
+            data = json.loads(json_text)
+        except Exception:
+            body = raw if raw else "[NEEDS USER INPUT: recipient email]"
+            return AgentResult(content=body, messages=messages), "", "", ""
+
+        to = (data.get("to") or "").strip()
+
+        if not to and to_guess:
+            to= to_guess
+        subject = (data.get("subject") or "").strip()
+        body = (data.get("body") or "").strip()
+
+        if not to:
+            if "[NEEDS USER INPUT" not in body:
+                body = (body + "\n\n[NEEDS USER INPUT: recipient email]").strip()
+            return AgentResult(content=body, messages=messages), "", "", subject
+        if to and "[NEEDS USER INPUT: recipient email]" in body:
+            body = body.replace("[NEEDS USER INPUT: recipient email]", "").strip()
+        draft_id = self.mail.create_draft(to=to, subject=subject or "(no subject)", body=body)
+        return AgentResult(content=body, messages=messages), draft_id, to, subject

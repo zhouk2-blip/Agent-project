@@ -28,6 +28,31 @@ def parse_kv(text: str, key: str) -> str:
     if val.startswith('"') and val.endswith('"'):
         return val[1:-1]
     return val
+def extract_email(text: str) -> str:
+    """从自由文本里提取第一个邮箱地址。"""
+    m = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", text, flags=re.IGNORECASE)
+    return m.group(0) if m else ""
+
+def is_email_drafting_intent(text: str) -> bool:
+    """
+    detect that whether user wants to send an email
+    """
+    t = text.lower()
+
+    # 1) key words
+    if any(k in t for k in ["draft", "草拟", "起草", "写封邮件", "写邮件", "发邮件", "email to", "send an email"]):
+        return True
+
+    # 2) structure input to= / subject= / content= / 内容=
+    if any(k in t for k in ["to=", "subject=", "content=", "内容="]):
+        return True
+
+    # 3) natural language and email confirmation
+    if extract_email(text):
+        if any(k in t for k in ["email", "mail", "send", "发", "写", "问", "联系"]):
+            return True
+
+    return False
 
 def manual_edit_vscode(current_body: str, *, suffix: str = ".md") -> str | None:
     """
@@ -85,7 +110,7 @@ class Orchestrator:
     llm_provider: LLMProvider
     email_provider: EmailProvider
     profile: dict
-    pending: Optional[dict] = None  # 用于确认发送
+    pending: Optional[dict] = None  # used to make sure to send the message
 
     def __post_init__(self):
         self.agents: Dict[str, object] = {
@@ -167,7 +192,6 @@ class Orchestrator:
     def handle(self, user_text: str) -> AgentResult:
         user_text = (user_text or "").strip()
 
-        
         if self.pending and self.pending.get("type") == "confirm_send":
             low = user_text.lower().strip()
             if low.startswith(("revise", "edit", "rewrite", "regenerate", "manual", "show")):
@@ -199,7 +223,7 @@ class Orchestrator:
 
         # 1) first parse, then route
         cmd = parse_user_text(user_text)
-        print("DEBUG cmd.action=", cmd.action, type(cmd.action), "args=", getattr(cmd, "args", None))
+        
 
         if cmd.action in {Action.REVISE, Action.SHOW, Action.SEND, Action.CANCEL, Action.HELP}:
             key = "email"
@@ -235,10 +259,6 @@ class Orchestrator:
                         f"✅ 草稿已更新（v{d.version}，source={d.source}）\n\n"
                         f"{d.body}"
                     ))
-
-                    
-            
-            
             # 2.1 summarize inbox
             if any(k in user_text for k in ["总结", "收件箱", "inbox", "最近", "最新"]):
                 return agent.summarize_inbox(limit=5)
@@ -249,45 +269,98 @@ class Orchestrator:
             subject = parse_kv(user_text, "subject")
             content = parse_kv(user_text, "内容") or parse_kv(user_text, "content")
 
-            if ("草拟" in user_text or "draft" in user_text.lower()) and to and subject:
-                (draft_result, draft_id) = agent.draft_email(
-                    to=to,
-                    subject=subject,
-                    intent=content,
+            want_draft = is_email_drafting_intent(user_text)
+            # strong formating, in case that guessing does not work
+            if want_draft:
+                if to and subject:
+                    (draft_result, draft_id) = agent.draft_email(
+                        to=to,
+                        subject=subject,
+                        intent=content,
+                        context=""
+                    )
+                 # ---- Memory Hook (space) ----
+        # self.memory.on_email_draft_created(
+        #     user_text=user_text,
+        #     to=to, subject=subject, body=draft_result.content,
+        #     draft_id=draft_id
+        # )
+        # -----------------------------
+                    self.session.draft = DraftState(
+                        to=to,
+                        subject=subject,
+                        body=draft_result.content,
+                        draft_id = draft_id,
+                        version=1,
+                        source="llm",
+                    )
+                    
+                    self.pending = {
+                        "type": "confirm_send",
+                        "draft_id": draft_id,
+                        "to": to,
+                        "subject": subject,
+                    }
+
+                    return AgentResult(content=(
+                        " Gmail script created：\n\n"
+                        f"{draft_result.content}\n\n"
+                        "You can：\n"
+                        "revise manual\n"
+                        "revise edit <instruction>\n"
+                        "revise regenerate <instruction>\n"
+                        "-show\n\n"
+                        "CONFIRM SEND\n"
+                        "CANCEL\n"
+                    ))
+                 # B) natural language processing
+                to_guess = to or extract_email(user_text)
+
+                auto_text = user_text
+                if to_guess and "to=" not in user_text.lower():
+                    auto_text = f"{user_text}\n\nRecipient email detected: {to_guess}"
+
+                (draft_result, draft_id, to2, subject2) = agent.draft_email_auto(
+                    user_text=auto_text,
                     context=""
                 )
 
-                #  NEW：把草稿正文写进 session（source of truth）
-                self.session.draft = DraftState(
-                    to=to,
-                    subject=subject,
-                    body=draft_result.content,
-                    draft_id = draft_id,
-                    version=1,
-                    source="llm",
-                )
+                if not draft_id:
+                    # ---- Memory Hook (space) ----
+                    # self.memory.on_email_draft_failed_missing_fields(user_text=user_text, missing=["to"])
+                    # -----------------------------
+                    return AgentResult(content=(
+                        "我能帮你自动起草主题和正文，但我没识别到收件人邮箱。\n"
+                        "请把对方邮箱发我（例如：pengj2@carleton.edu），我就能立刻创建 Gmail 草稿。"
+                    ))
 
-                # 保留你原来的 pending（完全不动）
-                self.pending = {
-                    "type": "confirm_send",
-                    "draft_id": draft_id,
-                    "to": to,
-                    "subject": subject,
-                }
+                # ---- Memory Hook (space) ----
+                # self.memory.on_email_draft_created(
+                #     user_text=user_text,
+                #     to=to2, subject=subject2, body=draft_result.content,
+                #     draft_id=draft_id
+                # )
+                # -----------------------------
+
+                self.session.draft = DraftState(
+                    to=to2, subject=subject2, body=draft_result.content,
+                    draft_id=draft_id, version=1, source="llm"
+                )
+                self.pending = {"type": "confirm_send", "draft_id": draft_id, "to": to2, "subject": subject2}
 
                 return AgentResult(content=(
-                    "✅ 已创建 Gmail 草稿，并生成如下正文：\n\n"
-                    f"{draft_result.content}\n\n"
-                    "你可以：\n"
-                    "- 手动修改：revise manual\n"
-                    "- 让 AI 改：revise edit 更正式一点\n"
-                    "- 让 AI 重写：revise regenerate 更短版本\n"
-                    "- 查看草稿：show\n\n"
-                    "发送：CONFIRM SEND\n"
-                    "取消：CANCEL\n"
-                ))
-
-
+                        " Gmail script created：\n\n"
+                        f"{subject2}\n\n"
+                        f"{draft_result.content}\n\n"
+                        "You can：\n"
+                        "revise manual\n"
+                        "revise edit <instruction>\n"
+                        "revise regenerate <instruction>\n"
+                        "-show\n\n"
+                        "CONFIRM SEND\n"
+                        "CANCEL\n"
+                    ))
+           
             return AgentResult(content=(
                 "EmailAgent 已启用。\n\n用法：\n"
                 "1) 总结收件箱：总结我的收件箱\n"
